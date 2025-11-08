@@ -1,3 +1,11 @@
+```
++ .NET Framework 4.8
++ Log4Net
++ Dapper
++ System.Text.Json
++ System.Data.SQLite.Core v1.0.118.0
+```
+
 # How to build and run a windows service
 + What is the best way to build and run a Windows service that has features such as fail-fast, progressive indexing, checkpoint JSON, SQLite, and CSV?
 + I need to know how to build and run a Windows service that has features such as fail-fast, progressive indexing, checkpoint JSON, SQLite, and CSV.
