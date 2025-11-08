@@ -18,6 +18,8 @@ namespace ProgressiveIndexerService.Run
             AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
             TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
 
+            bool success = true;
+
             try
             {
                 Console.InputEncoding = Encoding.UTF8;
@@ -47,12 +49,19 @@ namespace ProgressiveIndexerService.Run
             }
             catch (Exception ex)
             {
+                success = false;
                 Console.WriteLine("\n❌ Lỗi không mong muốn: " + ex.Message);
                 Console.WriteLine(ex.StackTrace);
+                log.Error(ex.Message, ex);
             }
             finally
             {
-                log.Info($"DONE! JobId = {jobId}.");
+                if (success)
+                {
+                    log.Info($"Completed with Success! JobId = {jobId}.");
+                    log.Info($"DONE! JobId = {jobId}.");
+                }
+                else log.Info($"Completed with Failure. JobId = {jobId}.");
             }
         }
 

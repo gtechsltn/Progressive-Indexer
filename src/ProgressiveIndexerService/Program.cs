@@ -157,8 +157,9 @@ namespace ProgressiveIndexerService
                     Console.WriteLine($"✅ Hoàn tất OID={_oid}");
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                log.Error(ex.Message, ex);
                 SaveCheckpoint(fullIndex, status, bitArray); // lưu trạng thái trước khi ném lỗi
                 throw; // ném lỗi critical ra ngoài
             }
@@ -325,6 +326,7 @@ namespace ProgressiveIndexerService
                 }
                 catch (Exception ex)
                 {
+                    log.Error(ex.Message, ex);
                     FailedOids.Add(oid);
                     Console.WriteLine($"❌ Critical error OID={oid}: {ex.Message}");
                     SaveCheckpoint(fullIndex, status, bitArray);
@@ -421,6 +423,7 @@ namespace ProgressiveIndexerService
             }
             catch (Exception ex)
             {
+                log.Error(ex.Message, ex);
                 Console.WriteLine("\n❌ Lỗi không mong muốn: " + ex.Message);
                 Console.WriteLine(ex.StackTrace);
             }

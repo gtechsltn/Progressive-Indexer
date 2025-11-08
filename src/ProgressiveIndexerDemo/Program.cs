@@ -38,7 +38,7 @@ namespace ProgressiveIndexerJobAndRecord
     public class RecordIndexer
     {
         private readonly int _jobId;
-        private readonly int _oid;
+        private readonly long _oid;
         private readonly string _recordDir;
         private readonly string _fullIndexFile;
         private readonly string _statusFile;
@@ -47,7 +47,7 @@ namespace ProgressiveIndexerJobAndRecord
 
         private const int BatchSize = 50;
 
-        public RecordIndexer(int jobId, int oid)
+        public RecordIndexer(int jobId, long oid)
         {
             _jobId = jobId;
             _oid = oid;
