@@ -1,4 +1,4 @@
-# How to build and run
+# How to build and run a system that fail-fast + progressive indexing + checkpoint JSON + SQLite + CSV
 + [D:\gtechsltn\Progressive-Indexer](https://github.com/gtechsltn/Progressive-Indexer)
 + Open Visual Studio 2026
 + Ctrl + O to open .\src\ProgressiveIndexerService.slnx
