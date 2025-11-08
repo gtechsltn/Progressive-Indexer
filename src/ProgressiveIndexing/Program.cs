@@ -115,7 +115,7 @@ namespace ProgressiveIndexing
             }
         }
 
-        public async Task<bool> RunAsync(bool wantToThrowError, long failRecordId)
+        public async Task RunAsync(bool wantToThrowError, long failRecordId)
         {
             var fullIndex = JsonSerializer.Deserialize<FullIndex>(File.ReadAllText(_fullIndexFile))!;
             var status = JsonSerializer.Deserialize<IndexingStatus>(File.ReadAllText(_statusFile))!;
@@ -153,6 +153,7 @@ namespace ProgressiveIndexing
                     status.LastOffset = i;
                     status.LastIndexed = DateTime.UtcNow;
                     SaveCheckpoint(fullIndex, status, bits);
+
                     log.Info($"------Xử lý thành công RecordId={recordId}.");
                     Console.WriteLine($"✅ Folder {_folderId} - Record {recordId} done");
                 }
@@ -160,17 +161,16 @@ namespace ProgressiveIndexing
                 {
                     log.Error(ex.Message, ex);
                     Console.WriteLine($"❌ Lỗi Folder {_folderId}, Record {recordId}: {ex.Message}");
-                    UpdateFolderError(recordId, ex.Message);
+                    UpdateFolderError(recordId);
                     throw; // fail-fast
                 }
             }
 
             status.FullIndexingCompleted = true;
             SaveCheckpoint(fullIndex, status, bits);
-            return true;
         }
 
-        private void UpdateFolderError(long recordId, string error)
+        private void UpdateFolderError(long recordId)
         {
             var cmd = _conn.CreateCommand();
             cmd.CommandText = @"INSERT OR REPLACE INTO Folders(JobId, FolderId, RecordId, Status)
@@ -220,8 +220,10 @@ namespace ProgressiveIndexing
             string dbDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DB");
             Directory.CreateDirectory(dbDir);
             _dbFile = Path.Combine(dbDir, "ThirdSight.db");
+
             InitDb();
             InitFiles();
+            InitStructure();
         }
 
         private void InitDb()
@@ -257,11 +259,36 @@ namespace ProgressiveIndexing
             }
         }
 
+        private void InitStructure()
+        {
+            Console.WriteLine($"🗂️  Khởi tạo cấu trúc thư mục cho Job {_jobId}...");
+            foreach (var folder in _folders)
+            {
+                string folderPath = Path.Combine(_jobDir, $".{folder.Key}");
+                Directory.CreateDirectory(folderPath);
+
+                string metaFile = Path.Combine(folderPath, "metadata.json");
+                if (!File.Exists(metaFile))
+                {
+                    var meta = new
+                    {
+                        JobId = _jobId,
+                        FolderId = folder.Key,
+                        RecordCount = folder.Value.Count,
+                        CreatedAt = DateTime.UtcNow
+                    };
+                    File.WriteAllText(metaFile, JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }));
+                }
+            }
+            Console.WriteLine("✅ Đã khởi tạo đầy đủ cấu trúc thư mục Job.");
+        }
+
         public async Task RunAsync(bool wantToThrowError, long failRecordId)
         {
             using var conn = new SQLiteConnection($"Data Source={_dbFile}");
             conn.Open();
 
+            // Update Job Status
             var jobCmd = conn.CreateCommand();
             jobCmd.CommandText = "INSERT OR REPLACE INTO Job(JobId, Name, Status) VALUES($jid, $name, 'Running');";
             jobCmd.Parameters.AddWithValue("$jid", _jobId);
@@ -279,6 +306,9 @@ namespace ProgressiveIndexing
 
                 jobCmd.CommandText = "UPDATE Job SET Status='Completed' WHERE JobId=$jid;";
                 jobCmd.ExecuteNonQuery();
+
+                ExportCsv(conn);
+
                 Console.WriteLine("✅ Job hoàn tất toàn bộ!");
             }
             catch (Exception ex)
@@ -289,8 +319,51 @@ namespace ProgressiveIndexing
                 failCmd.CommandText = "UPDATE Job SET Status='Failed' WHERE JobId=$jid;";
                 failCmd.Parameters.AddWithValue("$jid", _jobId);
                 failCmd.ExecuteNonQuery();
-                Environment.Exit(1);
+                Environment.Exit(1); // Fail-fast
             }
+        }
+
+        private void ExportCsv(SQLiteConnection conn)
+        {
+            string csvFile = Path.Combine(_jobDir, $"Job{_jobId}-data.csv");
+            using var writer = new StreamWriter(csvFile, false, Encoding.UTF8);
+            writer.WriteLine("JobId,FolderId,RecordId,Status");
+
+            var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT JobId, FolderId, RecordId, Status FROM Folders WHERE JobId=$jid ORDER BY FolderId, RecordId;";
+            cmd.Parameters.AddWithValue("$jid", _jobId);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                writer.WriteLine($"{reader.GetInt32(0)},{reader.GetInt64(1)},{reader.GetInt64(2)},{reader.GetString(3)}");
+            }
+            Console.WriteLine($"✅ CSV xuất ra: {csvFile}");
+        }
+    }
+    #endregion
+
+    #region ConfigHelper
+    public class ConfigHelper
+    {
+        public static bool GetBoolean(string key, bool defaultValue = false)
+        {
+            string? val = ConfigurationManager.AppSettings[key];
+            if (bool.TryParse(val, out bool result)) return result;
+            return defaultValue;
+        }
+
+        public static int GetInt(string key, int defaultValue = 0)
+        {
+            string? val = ConfigurationManager.AppSettings[key];
+            if (int.TryParse(val, out int result)) return result;
+            return defaultValue;
+        }
+
+        public static long GetLong(string key, long defaultValue = 0)
+        {
+            string? val = ConfigurationManager.AppSettings[key];
+            if (long.TryParse(val, out long result)) return result;
+            return defaultValue;
         }
     }
     #endregion
@@ -298,52 +371,25 @@ namespace ProgressiveIndexing
     #region Program
     public class Program
     {
-        public static async Task Main(string[] args)
+        public static async Task Main()
         {
             Console.OutputEncoding = Encoding.UTF8;
 
-            int jobId = 2;
-            bool wantError = true;
-            long failRecordId = 576212;
+            // Read config or defaults
+            int jobId = ConfigHelper.GetInt("JobId", 2);
+            bool wantError = ConfigHelper.GetBoolean("WantToThrowError", true);
+            long failRecordId = ConfigHelper.GetLong("FailRecordId", 576212);
 
             var folders = new Dictionary<long, List<long>>
             {
                 { 576210, new List<long>{ 37174 } },
-                { 576302, new List<long>{ 37173, 57617, 576212 } }
+                { 576302, new List<long>{ 37173, 57617, 576212 } },
+                { 576303, new List<long>{ 37175 } },
             };
 
             var job = new JobIndexer(jobId, folders);
             await job.RunAsync(wantError, failRecordId);
         }
     }
-
     #endregion
-
-    #region Configuration Helpers
-
-    public class ConfigHelper
-    {
-        public static bool GetBoolean(string configKey, bool defaultValue = false)
-        {
-            var cfgKey = ConfigurationManager.AppSettings[configKey];
-            var success = bool.TryParse(cfgKey, out bool retValue);
-            return success ? retValue : (cfgKey.Equals("1") || defaultValue);
-        }
-
-        public static int GetInt(string configKey, int defaultValue = 0)
-        {
-            var cfgKey = ConfigurationManager.AppSettings[configKey];
-            var success = int.TryParse(cfgKey, out int retValue);
-            return success ? retValue : defaultValue;
-        }
-
-        public static long GetLong(string configKey, long defaultValue = 0)
-        {
-            var cfgKey = ConfigurationManager.AppSettings[configKey];
-            var success = long.TryParse(cfgKey, out long retValue);
-            return success ? retValue : defaultValue;
-        }
-    }
-
-    #endregion Configuration Helpers
 }
