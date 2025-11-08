@@ -1,4 +1,7 @@
-# How to build and run a system that fail-fast + progressive indexing + checkpoint JSON + SQLite + CSV
+# How to build and run a windows service
++ What is the best way to build and run a Windows service that has features such as fail-fast, progressive indexing, checkpoint JSON, SQLite, and CSV?
++ I need to know how to build and run a Windows service that has features such as fail-fast, progressive indexing, checkpoint JSON, SQLite, and CSV.
++ How to Build and Run a Windows Service with Fail-Fast, Progressive Indexing, Checkpoint JSON, SQLite, and CSV Support?
 + [D:\gtechsltn\Progressive-Indexer](https://github.com/gtechsltn/Progressive-Indexer)
 + Open Visual Studio 2026
 + Ctrl + O to open .\src\ProgressiveIndexerService.slnx
