@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
@@ -78,6 +79,30 @@ namespace ProgressiveIndexing.Run
             Console.WriteLine(e.Exception.Message);
             Console.WriteLine(e.Exception.StackTrace);
             e.SetObserved();
+        }
+    }
+
+    public class ConfigHelper
+    {
+        public static bool GetBoolean(string key, bool defaultValue = false)
+        {
+            string? val = ConfigurationManager.AppSettings[key];
+            if (bool.TryParse(val, out bool result)) return result;
+            return defaultValue;
+        }
+
+        public static int GetInt(string key, int defaultValue = 0)
+        {
+            string? val = ConfigurationManager.AppSettings[key];
+            if (int.TryParse(val, out int result)) return result;
+            return defaultValue;
+        }
+
+        public static long GetLong(string key, long defaultValue = 0)
+        {
+            string? val = ConfigurationManager.AppSettings[key];
+            if (long.TryParse(val, out long result)) return result;
+            return defaultValue;
         }
     }
 }

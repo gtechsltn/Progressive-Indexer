@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Configuration;
 using System.Data.SQLite;
 using System.IO;
 using System.Reflection;
@@ -66,7 +65,7 @@ namespace ProgressiveIndexing
     }
     #endregion
 
-    #region Folder Indexer
+    #region FolderIndexer
     public class FolderIndexer
     {
         static readonly ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
@@ -108,6 +107,7 @@ namespace ProgressiveIndexing
                     _bitArray = Convert.ToBase64String(new byte[1])
                 };
                 File.WriteAllText(_fullIndexFile, JsonSerializer.Serialize(fi, new JsonSerializerOptions { WriteIndented = true }));
+
                 var st = new IndexingStatus { LastIndexed = DateTime.UtcNow, LastOffset = 0, FullIndexingCompleted = false };
                 var js = JsonSerializer.Serialize(st, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(_statusFile, js);
@@ -125,17 +125,14 @@ namespace ProgressiveIndexing
             {
                 long recordId = _recordIds[i];
 
-                log.Info($"----Xử lý RecordId={recordId}...");
-
                 if (BitHelper.IsBitSet(ref bits, i))
                 {
-                    log.Info($"------Đã xử lý thành công RecordId={recordId} trước đó rồi.");
+                    log.Info($"----Đã xử lý RecordId={recordId} trước đó, bỏ qua.");
                     continue;
                 }
 
                 try
                 {
-                    // Giả lập lỗi
                     if (wantToThrowError && recordId == failRecordId)
                         throw new Exception($"Giả lập lỗi tại Record {recordId}");
 
@@ -154,7 +151,6 @@ namespace ProgressiveIndexing
                     status.LastIndexed = DateTime.UtcNow;
                     SaveCheckpoint(fullIndex, status, bits);
 
-                    log.Info($"------Xử lý thành công RecordId={recordId}.");
                     Console.WriteLine($"✅ Folder {_folderId} - Record {recordId} done");
                 }
                 catch (Exception ex)
@@ -185,8 +181,10 @@ namespace ProgressiveIndexing
         {
             if (File.Exists(_statusFile))
                 File.Copy(_statusFile, _backupFile, true);
+
             fi._bitArray = Convert.ToBase64String(bits);
             fi._arrayLength = bits.Length;
+
             File.WriteAllText(_fullIndexFile, JsonSerializer.Serialize(fi, new JsonSerializerOptions { WriteIndented = true }));
             File.WriteAllText(_statusFile, JsonSerializer.Serialize(st, new JsonSerializerOptions { WriteIndented = true }));
         }
@@ -223,7 +221,6 @@ namespace ProgressiveIndexing
 
             InitDb();
             InitFiles();
-            InitStructure();
         }
 
         private void InitDb()
@@ -259,36 +256,11 @@ namespace ProgressiveIndexing
             }
         }
 
-        private void InitStructure()
-        {
-            Console.WriteLine($"🗂️  Khởi tạo cấu trúc thư mục cho Job {_jobId}...");
-            foreach (var folder in _folders)
-            {
-                string folderPath = Path.Combine(_jobDir, $".{folder.Key}");
-                Directory.CreateDirectory(folderPath);
-
-                string metaFile = Path.Combine(folderPath, "metadata.json");
-                if (!File.Exists(metaFile))
-                {
-                    var meta = new
-                    {
-                        JobId = _jobId,
-                        FolderId = folder.Key,
-                        RecordCount = folder.Value.Count,
-                        CreatedAt = DateTime.UtcNow
-                    };
-                    File.WriteAllText(metaFile, JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }));
-                }
-            }
-            Console.WriteLine("✅ Đã khởi tạo đầy đủ cấu trúc thư mục Job.");
-        }
-
         public async Task RunAsync(bool wantToThrowError, long failRecordId)
         {
             using var conn = new SQLiteConnection($"Data Source={_dbFile}");
             conn.Open();
 
-            // Update Job Status
             var jobCmd = conn.CreateCommand();
             jobCmd.CommandText = "INSERT OR REPLACE INTO Job(JobId, Name, Status) VALUES($jid, $name, 'Running');";
             jobCmd.Parameters.AddWithValue("$jid", _jobId);
@@ -315,11 +287,13 @@ namespace ProgressiveIndexing
             {
                 log.Error(ex.Message, ex);
                 Console.WriteLine($"❌ Lỗi job {_jobId}: {ex.Message}");
+
                 var failCmd = conn.CreateCommand();
                 failCmd.CommandText = "UPDATE Job SET Status='Failed' WHERE JobId=$jid;";
                 failCmd.Parameters.AddWithValue("$jid", _jobId);
                 failCmd.ExecuteNonQuery();
-                Environment.Exit(1); // Fail-fast
+
+                Environment.Exit(1); // fail-fast
             }
         }
 
@@ -332,38 +306,14 @@ namespace ProgressiveIndexing
             var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT JobId, FolderId, RecordId, Status FROM Folders WHERE JobId=$jid ORDER BY FolderId, RecordId;";
             cmd.Parameters.AddWithValue("$jid", _jobId);
+
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
             {
                 writer.WriteLine($"{reader.GetInt32(0)},{reader.GetInt64(1)},{reader.GetInt64(2)},{reader.GetString(3)}");
             }
+
             Console.WriteLine($"✅ CSV xuất ra: {csvFile}");
-        }
-    }
-    #endregion
-
-    #region ConfigHelper
-    public class ConfigHelper
-    {
-        public static bool GetBoolean(string key, bool defaultValue = false)
-        {
-            string? val = ConfigurationManager.AppSettings[key];
-            if (bool.TryParse(val, out bool result)) return result;
-            return defaultValue;
-        }
-
-        public static int GetInt(string key, int defaultValue = 0)
-        {
-            string? val = ConfigurationManager.AppSettings[key];
-            if (int.TryParse(val, out int result)) return result;
-            return defaultValue;
-        }
-
-        public static long GetLong(string key, long defaultValue = 0)
-        {
-            string? val = ConfigurationManager.AppSettings[key];
-            if (long.TryParse(val, out long result)) return result;
-            return defaultValue;
         }
     }
     #endregion
@@ -375,16 +325,14 @@ namespace ProgressiveIndexing
         {
             Console.OutputEncoding = Encoding.UTF8;
 
-            // Read config or defaults
-            int jobId = ConfigHelper.GetInt("JobId", 2);
-            bool wantError = ConfigHelper.GetBoolean("WantToThrowError", true);
-            long failRecordId = ConfigHelper.GetLong("FailRecordId", 576212);
+            int jobId = 2;
+            bool wantError = true;
+            long failRecordId = 576212;
 
             var folders = new Dictionary<long, List<long>>
             {
                 { 576210, new List<long>{ 37174 } },
-                { 576302, new List<long>{ 37173, 57617, 576212 } },
-                { 576303, new List<long>{ 37175 } },
+                { 576302, new List<long>{ 37173, 57617, 576212 } }
             };
 
             var job = new JobIndexer(jobId, folders);

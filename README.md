@@ -1,3 +1,10 @@
+# Progressive Indexing
+* Fail-fast: gặp record lỗi dừng ngay.
+* Progressive indexing: lưu checkpoint Folder + Record.
+* Resume: bỏ qua Folder/Record đã hoàn thành khi chạy lại.
+* CSV xuất chỉ khi Job hoàn tất.
+* JSON + SQLite giữ nguyên như cấu trúc bạn yêu cầu.
+
 ```
 + .NET Framework 4.8
 + Log4Net
@@ -5,6 +12,15 @@
 + System.Text.Json
 + System.Data.SQLite.Core v1.0.118.0
 ```
+
+* Vậy là chúng ta đã thiết lập xong tính năng fail-fast, lập chỉ mục lũy tiến và xuất CSV.
+* Nếu bạn muốn, tiếp theo chúng tôi cũng có thể thêm tính năng tiếp tục từ trạng thái trước đó—vì vậy sau khi gặp sự cố hoặc fail-fast, nó sẽ tự động lấy lại từ Thư mục/Bản ghi đã xử lý gần nhất. Điều này rất tiện lợi cho các tập dữ liệu lớn.
+* Bạn có muốn tôi làm điều đó tiếp theo không?
+
+* Giữ nguyên cấu trúc JSON + SQLite
+* Kết hợp fail-fast, progressive indexing, và resume capability.
+* Chỉ xuất CSV khi toàn bộ Job thành công.
+* Folder/Record đã xử lý thì bỏ qua khi chạy lại.
 
 # How to build and run a windows service
 + What is the best way to build and run a Windows service that has features such as fail-fast, progressive indexing, checkpoint JSON, SQLite, and CSV?
