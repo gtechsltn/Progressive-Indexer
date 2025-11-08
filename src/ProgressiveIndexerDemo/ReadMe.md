@@ -1,3 +1,33 @@
+# Features (Tính năng)
+
+## Tính năng phiên bản mới (updated)
+
+* Record-level progressive indexing: mỗi OID lưu trong thư mục riêng .OID.
+
+* Job-level progressive indexing: lưu vào ExportJob<JobID>-fullindex.json + ExportJob<JobID>-indexing-status.json.
+
+* Kết quả lưu vào SQLite ngay sau khi xử lý record.
+
+* Cuối cùng xuất CSV tổng hợp từ SQLite, đảm bảo không mất dữ liệu khi Job bị dừng giữa chừng.
+
+* Tự mở rộng bitArray khi số lượng OID tăng.
+
+## Job-level progressive indexing:
+
+* Lưu tiến trình toàn bộ Job vào ExportJob<JobID>-fullindex.json + ExportJob<JobID>-indexing-status.json.
+
+* Khi chạy lại, chỉ xử lý OID chưa export.
+
+## Record-level progressive indexing:
+
+* Mỗi OID có thư mục .OID với fullindex + indexing-status.
+
+* Quản lý tiến trình OID riêng biệt, có thể restart từng OID.
+
+* Cập nhật Job-level bitArray: sau khi xử lý xong mỗi OID.
+
+* CSV tổng hợp Job: Job<JobID>-data.csv chứa tất cả record của Job.
+
 ## Technical
 + System.Data.SqlClient
 + System.Data.SQLite.Core v1.0.118.0
@@ -91,4 +121,61 @@ class Program
         Environment.Exit(1);
     }
 }
+```
+
+## Cách chạy
+
+```
+D:
+cd D:\gtechsltn\Progressive-Indexer\src\ProgressiveIndexerDemo\ProgressiveIndexerDemo\bin\Debug
+ProgressiveIndexerDemo 7 576210,576211,576212,576213,576214,576215
+```
+
+## Khuyễn nghị dùng đường dẫn thư mục hiện tại
+
+### Environment.CurrentDirectory
+
+* Là thư mục làm việc hiện tại của tiến trình (working directory).
+
+* Có thể thay đổi trong quá trình chạy bằng Directory.SetCurrentDirectory().
+
+* Phụ thuộc vào cách chạy ứng dụng:
+
+* Chạy từ cmd: là thư mục hiện tại của command prompt
+
+* Chạy từ Visual Studio: thường là thư mục dự án bin\Debug\netX
+
+* Ví dụ rủi ro:
+
+```
+Console.WriteLine(Environment.CurrentDirectory);
+// Khi chạy từ shortcut, có thể là C:\Users\Username\Desktop
+```
+
+### AppDomain.CurrentDomain.BaseDirectory
+
+* Là thư mục chứa file exe hoặc dll của ứng dụng.
+
+* Không thay đổi trong suốt thời gian chạy.
+
+* Thích hợp để lưu dữ liệu cố định hoặc file cấu hình đi kèm app, ví dụ DB hoặc file log.
+
+Ví dụ:
+
+```
+Console.WriteLine(AppDomain.CurrentDomain.BaseDirectory);
+// C:\Projects\MyApp\bin\Debug\net7.0\
+```
+
+### Khuyến nghị cho DB
+
+* Vì DB phải cố định và không phụ thuộc vào nơi chạy:
+* Dùng AppDomain.CurrentDomain.BaseDirectory sẽ an toàn hơn.
+* Nếu dùng Environment.CurrentDirectory, DB có thể bị tạo nhầm chỗ nếu chạy từ command prompt hay task scheduler.
+
+# Kỹ thuật sửa dụng
+```
+ <PropertyGroup>
+    <LangVersion>preview</LangVersion>
+  </PropertyGroup>
 ```

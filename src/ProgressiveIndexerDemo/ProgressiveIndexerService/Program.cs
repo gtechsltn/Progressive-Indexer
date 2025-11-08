@@ -3,22 +3,21 @@ using System.Collections.Generic;
 using System.Data.SQLite;
 using System.IO;
 using System.Reflection;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 
 using log4net;
 
-
-namespace ProgressiveIndexerJobAndRecord
+namespace ProgressiveIndexerService
 {
+    #region Data Models
     public class FullIndex
     {
         public DateTime _utcCreated { get; set; }
         public int _arrayLength { get; set; }
-        public long _minOID { get; set; }   // long
-        public long _maxOID { get; set; }   // long
+        public int _minOID { get; set; }
+        public int _maxOID { get; set; }
         public string _bitArray { get; set; }
     }
 
@@ -31,10 +30,12 @@ namespace ProgressiveIndexerJobAndRecord
 
     public class DataRecord
     {
-        public long OID { get; set; }       // long
+        public int OID { get; set; }
         public string Value { get; set; }
     }
+    #endregion
 
+    #region RecordIndexer
     public class RecordIndexer
     {
         private readonly int _jobId;
@@ -43,14 +44,14 @@ namespace ProgressiveIndexerJobAndRecord
         private readonly string _fullIndexFile;
         private readonly string _statusFile;
         private readonly string _backupStatusFile;
-        private readonly string _dbFile;
 
-        private const int BatchSize = 50;
+        private readonly string _dbFile;
 
         public RecordIndexer(int jobId, int oid)
         {
             _jobId = jobId;
             _oid = oid;
+
             _recordDir = $@"D:\DM\PIDX\{jobId}\.{oid}";
             Directory.CreateDirectory(_recordDir);
 
@@ -58,7 +59,7 @@ namespace ProgressiveIndexerJobAndRecord
             _statusFile = Path.Combine(_recordDir, $"{oid}-indexing-status.json");
             _backupStatusFile = Path.Combine(_recordDir, $"{oid}-indexing-status.json.bak");
 
-            // DB chung: <CurrentDirectory>\DB\ThirdSight.db
+            // DB chung: <CurrentAppDirectory>\DB\ThirdSight.db
             string dbDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DB");
             Directory.CreateDirectory(dbDir);
             _dbFile = Path.Combine(dbDir, "ThirdSight.db");
@@ -68,9 +69,10 @@ namespace ProgressiveIndexerJobAndRecord
 
         private void InitializeFiles()
         {
+            // Tạo file JSON nếu chưa tồn tại
             if (!File.Exists(_fullIndexFile))
             {
-                var init = new FullIndex
+                var fullIndex = new FullIndex
                 {
                     _utcCreated = DateTime.UtcNow,
                     _arrayLength = 1,
@@ -78,20 +80,20 @@ namespace ProgressiveIndexerJobAndRecord
                     _maxOID = _oid,
                     _bitArray = Convert.ToBase64String(new byte[] { 0 })
                 };
-                File.WriteAllText(_fullIndexFile, JsonSerializer.Serialize(init, new JsonSerializerOptions { WriteIndented = true }));
+                File.WriteAllText(_fullIndexFile, JsonSerializer.Serialize(fullIndex, new JsonSerializerOptions { WriteIndented = true }));
 
-                var initStatus = new IndexingStatus
+                var status = new IndexingStatus
                 {
                     LastIndexed = DateTime.UtcNow,
                     LastOffset = 0,
                     FullIndexingCompleted = false
                 };
-                var json = JsonSerializer.Serialize(initStatus, new JsonSerializerOptions { WriteIndented = true });
+                string json = JsonSerializer.Serialize(status, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(_statusFile, json);
                 File.WriteAllText(_backupStatusFile, json);
             }
 
-            // Tạo DB nếu chưa có
+            // Tạo DB nếu chưa tồn tại
             if (!File.Exists(_dbFile))
             {
                 using var conn = new SQLiteConnection($"Data Source={_dbFile}");
@@ -100,7 +102,7 @@ namespace ProgressiveIndexerJobAndRecord
                 cmd.CommandText = @"
                     CREATE TABLE IF NOT EXISTS Records (
                         JobID INTEGER,
-                        OID BIGINT,        -- long
+                        OID INTEGER,
                         Value TEXT,
                         ProcessedAt TEXT,
                         PRIMARY KEY(JobID, OID)
@@ -122,36 +124,52 @@ namespace ProgressiveIndexerJobAndRecord
 
             for (int i = status.LastOffset; i < totalBits; i++)
             {
-                if (!IsBitSet(ref bitArray, i))
+                try
                 {
-                    long currentOID = fullIndex._minOID + i;
-                    var record = new DataRecord
+                    if (!IsBitSet(ref bitArray, i))
                     {
-                        OID = currentOID,
-                        Value = $"OK" // có thể thay bằng dữ liệu thật
-                    };
+                        int currentOID = fullIndex._minOID + i;
 
-                    await Task.Delay(5); // giả lập xử lý
+                        // Thử giả lập lỗi ngẫu nhiên (minh họa)
+                        if (new Random().Next(0, 10) < 2) throw new Exception("Fake processing error");
 
-                    // Lưu vào DB ngay sau khi xử lý record
-                    var cmd = conn.CreateCommand();
-                    cmd.CommandText = "INSERT OR REPLACE INTO Records (JobID, OID, Value, ProcessedAt) VALUES ($jobId, $oid, $val, $time);";
-                    cmd.Parameters.AddWithValue("$jobId", _jobId);
-                    cmd.Parameters.AddWithValue("$oid", record.OID); // long
-                    cmd.Parameters.AddWithValue("$val", record.Value);
-                    cmd.Parameters.AddWithValue("$time", DateTime.UtcNow.ToString("o"));
-                    cmd.ExecuteNonQuery();
+                        var record = new DataRecord
+                        {
+                            OID = currentOID,
+                            Value = $"Record-{currentOID}" // thay bằng dữ liệu thực tế
+                        };
 
-                    // đánh dấu record đã xử lý
-                    SetBit(ref bitArray, i, true);
-                    status.LastOffset = i;
-                    status.LastIndexed = DateTime.UtcNow;
+                        // Giả lập xử lý
+                        await Task.Delay(5);
 
-                    if ((i + 1) % BatchSize == 0)
-                        SaveCheckpoint(fullIndex, status, bitArray);
+                        // Ghi vào DB ngay khi xử lý xong
+                        var cmd = conn.CreateCommand();
+                        cmd.CommandText = "INSERT OR REPLACE INTO Records (JobID, OID, Value, ProcessedAt) VALUES ($jobId, $oid, $val, $time);";
+                        cmd.Parameters.AddWithValue("$jobId", _jobId);
+                        cmd.Parameters.AddWithValue("$oid", record.OID);
+                        cmd.Parameters.AddWithValue("$val", record.Value);
+                        cmd.Parameters.AddWithValue("$time", DateTime.UtcNow.ToString("o"));
+                        cmd.ExecuteNonQuery();
+
+                        // Đánh dấu record đã xử lý
+                        SetBit(ref bitArray, i, true);
+                        status.LastOffset = i;
+                        status.LastIndexed = DateTime.UtcNow;
+
+                        // Checkpoint sau mỗi batch
+                        if ((i + 1) % 50 == 0)
+                            SaveCheckpoint(fullIndex, status, bitArray);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"❌ Lỗi khi xử lý OID={fullIndex._minOID + i}: {ex.Message}");
+                    Console.WriteLine("Service sẽ tiếp tục xử lý bản ghi tiếp theo...");
+                    continue; // tiếp tục bản ghi tiếp theo
                 }
             }
 
+            // Hoàn tất Job-level
             status.FullIndexingCompleted = true;
             SaveCheckpoint(fullIndex, status, bitArray);
         }
@@ -168,6 +186,7 @@ namespace ProgressiveIndexerJobAndRecord
             File.WriteAllText(_statusFile, JsonSerializer.Serialize(status, new JsonSerializerOptions { WriteIndented = true }));
         }
 
+        #region BitArray Helpers
         public static bool IsBitSet(ref byte[] array, int index)
         {
             if (index >= array.Length * 8)
@@ -205,19 +224,21 @@ namespace ProgressiveIndexerJobAndRecord
             Console.WriteLine($"⚙️ Mở rộng bitArray từ {oldArray.Length} → {newArray.Length} byte.");
             return newArray;
         }
+        #endregion
     }
+    #endregion
 
-    // ----------------- Job-level indexer -----------------
+    #region JobIndexer
     public class JobIndexer
     {
         private readonly int _jobId;
-        private readonly List<long> _oids;
+        private readonly List<int> _oids;
         private readonly string _jobDir;
         private readonly string _fullIndexFile;
         private readonly string _statusFile;
         private readonly string _backupStatusFile;
 
-        public JobIndexer(int jobId, List<long> oids)
+        public JobIndexer(int jobId, List<int> oids)
         {
             _jobId = jobId;
             _oids = oids;
@@ -261,26 +282,35 @@ namespace ProgressiveIndexerJobAndRecord
             foreach (var oid in _oids)
             {
                 int index = _oids.IndexOf(oid);
-                if (!RecordIndexer.IsBitSet(ref bitArray, index))
+                try
                 {
-                    var recordIndexer = new RecordIndexer(_jobId, oid);
-                    await recordIndexer.RunAsync();
+                    if (!RecordIndexer.IsBitSet(ref bitArray, index))
+                    {
+                        var recordIndexer = new RecordIndexer(_jobId, oid);
+                        await recordIndexer.RunAsync();
 
-                    // đánh dấu Job-level
-                    RecordIndexer.SetBit(ref bitArray, index, true);
-                    status.LastOffset = index;
-                    status.LastIndexed = DateTime.UtcNow;
+                        // đánh dấu Job-level
+                        RecordIndexer.SetBit(ref bitArray, index, true);
+                        status.LastOffset = index;
+                        status.LastIndexed = DateTime.UtcNow;
 
-                    SaveCheckpoint(fullIndex, status, bitArray);
+                        // checkpoint
+                        SaveCheckpoint(fullIndex, status, bitArray);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"❌ Lỗi khi xử lý OID={oid}: {ex.Message}");
+                    Console.WriteLine("Service sẽ tiếp tục OID tiếp theo...");
+                    continue;
                 }
             }
 
             status.FullIndexingCompleted = true;
             SaveCheckpoint(fullIndex, status, bitArray);
 
-            // Xuất CSV từ DB
+            // Xuất CSV từ DB cho Job hiện tại
             string dbDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DB");
-            Directory.CreateDirectory(dbDir);
             string dbFile = Path.Combine(dbDir, "ThirdSight.db");
             string csvFile = Path.Combine(_jobDir, $"Job{_jobId}-data.csv");
 
@@ -289,6 +319,7 @@ namespace ProgressiveIndexerJobAndRecord
             var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT OID, Value, ProcessedAt FROM Records WHERE JobID=$jobId ORDER BY OID;";
             cmd.Parameters.AddWithValue("$jobId", _jobId);
+
             using var reader = cmd.ExecuteReader();
             using var writer = new StreamWriter(csvFile, false, Encoding.UTF8);
             writer.WriteLine("OID,Value,ProcessedAt");
@@ -312,66 +343,90 @@ namespace ProgressiveIndexerJobAndRecord
             File.WriteAllText(_statusFile, JsonSerializer.Serialize(status, new JsonSerializerOptions { WriteIndented = true }));
         }
     }
+    #endregion
 
-    // ----------------- Program -----------------
+    #region Program
     class Program
     {
         static readonly ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
-
         static async Task Main(string[] args)
         {
+            // Bắt lỗi toàn cục cho thread bình thường
             AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
-            Console.InputEncoding = Encoding.UTF8;
-            Console.OutputEncoding = Encoding.UTF8;
-            log4net.Config.XmlConfigurator.Configure();
-            if (args.Length < 2)
+
+            // Bắt lỗi async Task chưa được xử lý
+            TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
+
+            try
             {
-                Console.WriteLine("Bạn dùng sai cú pháp. Cú pháp đúng là: ProgressiveIndexerService <JobID> <OID1,OID2,...>");
-                return;
-            }
+                Console.InputEncoding = Encoding.UTF8;
+                Console.OutputEncoding = Encoding.UTF8;
+                log4net.Config.XmlConfigurator.Configure();
 
-            if (!int.TryParse(args[0], out int jobId))
+                if (args.Length < 2)
+                {
+                    Console.WriteLine("Cú pháp: Program.exe <JobID> <OID1,OID2,...>");
+                    return;
+                }
+
+                if (!int.TryParse(args[0], out int jobId))
+                {
+                    Console.WriteLine("JobID không hợp lệ!");
+                    return;
+                }
+
+                var oidsInput = args[1].Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                List<int> oids = new();
+                foreach (var s in oidsInput)
+                    if (int.TryParse(s, out int oid)) oids.Add(oid);
+
+                if (oids.Count == 0)
+                {
+                    Console.WriteLine("Không có OID hợp lệ!");
+                    return;
+                }
+
+                var jobIndexer = new JobIndexer(jobId, oids);
+                await jobIndexer.RunAsync();
+
+                Console.WriteLine("Tất cả OID đã xử lý xong!");
+                
+            }
+            catch (Exception ex)
             {
-                Console.WriteLine("JobID không hợp lệ!");
-                return;
+                log.Error(ex.Message, ex);
+                // Bắt các lỗi còn sót trong Main
+                Console.WriteLine("\n❌ Lỗi không mong muốn: " + ex.Message);
+                Console.WriteLine(ex.StackTrace);
             }
-
-            var oidsInput = args[1].Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
-            List<long> oids = new();
-            foreach (var s in oidsInput)
-                if (int.TryParse(s, out int oid)) oids.Add(oid);
-
-            if (oids.Count == 0)
-            {
-                Console.WriteLine("Không có OID hợp lệ để xử lý!");
-                return;
-            }
-
-            var jobIndexer = new JobIndexer(jobId, oids);
-            await jobIndexer.RunAsync();
-
-            Console.WriteLine("Tất cả OID đã xử lý xong!");
         }
 
-        static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+        private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
         {
             Exception ex = (Exception)e.ExceptionObject;
-            Console.WriteLine("\n\n***************************************************");
-            Console.WriteLine("           UNHANDLED EXCEPTION OCCURRED           ");
-            Console.WriteLine("***************************************************");
-            Console.WriteLine($"Error Message: {ex.Message}");
-            Console.WriteLine($"Source: {ex.Source}");
-            Console.WriteLine($"Stack Trace:\n{ex.StackTrace}");
+            log.Error(ex.Message, ex);
+            Console.WriteLine("\n🔴 UNHANDLED EXCEPTION:");
+            Console.WriteLine(ex.Message);
+            Console.WriteLine(ex.StackTrace);
 
             if (ex.InnerException != null)
             {
                 Console.WriteLine("\nInner Exception:");
-                Console.WriteLine($"Error Message: {ex.InnerException.Message}");
-                Console.WriteLine($"Stack Trace:\n{ex.InnerException.StackTrace}");
+                Console.WriteLine(ex.InnerException.Message);
+                Console.WriteLine(ex.InnerException.StackTrace);
             }
 
-            Console.WriteLine("\nApplication will now terminate.");
+            Console.WriteLine("\nỨng dụng sẽ kết thúc an toàn.");
             Environment.Exit(1);
         }
+
+        private static void TaskScheduler_UnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+        {
+            Console.WriteLine("\n🔴 UNOBSERVED TASK EXCEPTION:");
+            Console.WriteLine(e.Exception.Message);
+            Console.WriteLine(e.Exception.StackTrace);
+            e.SetObserved(); // tránh crash ứng dụng
+        }
     }
+    #endregion
 }
