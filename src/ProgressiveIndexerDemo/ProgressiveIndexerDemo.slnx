@@ -1,7 +1,0 @@
-<Solution>
-  <Folder Name="/Solution Items/">
-    <File Path="ReadMe.md" />
-  </Folder>
-  <Project Path="ProgressiveIndexerDemo/ProgressiveIndexerDemo.csproj" />
-  <Project Path="ProgressiveIndexerService/ProgressiveIndexerService.csproj" />
-</Solution>

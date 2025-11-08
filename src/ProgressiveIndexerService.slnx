@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="../README.md" />
+  </Folder>
+  <Project Path="ProgressiveIndexerDemo/ProgressiveIndexerDemo.csproj" Id="d608f00e-da8c-4078-aa9d-9f1632b9f8db" />
+  <Project Path="ProgressiveIndexerService.Run/ProgressiveIndexerService.Run.csproj" Id="1d8721b4-7838-4049-862d-adbd3b5eb235" />
+  <Project Path="ProgressiveIndexerService/ProgressiveIndexerService.csproj" Id="a7628c16-245f-4651-afff-a892b7a42eb8" />
+</Solution>

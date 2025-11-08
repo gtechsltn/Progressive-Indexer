@@ -1,8 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Data.SQLite;
 using System.IO;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -38,6 +40,7 @@ namespace ProgressiveIndexerService
     #region RecordIndexer
     public class RecordIndexer
     {
+        static readonly ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
         private readonly int _jobId;
         private readonly long _oid;
         private readonly string _recordDir;
@@ -107,25 +110,26 @@ namespace ProgressiveIndexerService
             }
         }
 
-        public async Task<bool> RunAsync()
+        public async Task RunAsync()
         {
             var fullIndex = JsonSerializer.Deserialize<FullIndex>(File.ReadAllText(_fullIndexFile))!;
             var status = JsonSerializer.Deserialize<IndexingStatus>(File.ReadAllText(_statusFile))!;
             byte[] bitArray = Convert.FromBase64String(fullIndex._bitArray);
 
-            bool hasError = false;
-
             using var conn = new SQLiteConnection($"Data Source={_dbFile}");
             conn.Open();
 
-            int index = 0;
+            int index = 0; // Chỉ số bitArray cho record
             try
             {
                 if (!IsBitSet(ref bitArray, index))
                 {
-                    // ===== Giả lập lỗi OID ví dụ =====
-                    if (_oid == 576212 || _oid == 576214)
-                        throw new Exception($"Giả lập lỗi khi xử lý OID {_oid}");
+                    log.Info($"Chỉ số bitArray cho record = {index}, record id = {_oid}.");
+
+
+                    // ===== Giả lập lỗi critical nếu bật AppSettings =====
+                    if (ConfigHelper.GetBoolean("ErrorSimulationFlag") && (_oid == ConfigHelper.GetLong("ErrorSimulationRecordId")))
+                        throw new Exception($"Critical error khi xử lý OID {_oid}");
 
                     var record = new DataRecord
                     {
@@ -133,8 +137,7 @@ namespace ProgressiveIndexerService
                         Value = $"Record-{_oid}"
                     };
 
-                    // Giả lập xử lý async
-                    await Task.Delay(5);
+                    await Task.Delay(5); // Giả lập xử lý
 
                     var cmd = conn.CreateCommand();
                     cmd.CommandText = @"
@@ -154,18 +157,16 @@ namespace ProgressiveIndexerService
                     Console.WriteLine($"✅ Hoàn tất OID={_oid}");
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"❌ Lỗi khi xử lý OID={_oid}: {ex.Message}");
-                hasError = true;
+                SaveCheckpoint(fullIndex, status, bitArray); // lưu trạng thái trước khi ném lỗi
+                throw; // ném lỗi critical ra ngoài
             }
             finally
             {
                 status.FullIndexingCompleted = true;
                 SaveCheckpoint(fullIndex, status, bitArray);
             }
-
-            return !hasError;
         }
 
         private void SaveCheckpoint(FullIndex fullIndex, IndexingStatus status, byte[] bitArray)
@@ -220,17 +221,49 @@ namespace ProgressiveIndexerService
         }
         #endregion
     }
+
+
     #endregion
+
+    #region Configuration Helpers
+
+    public class ConfigHelper
+    {
+        public static bool GetBoolean(string configKey, bool defaultValue = false)
+        {
+            var cfgKey = ConfigurationManager.AppSettings[configKey];
+            var success = bool.TryParse(cfgKey, out bool retValue);
+            return success ? retValue : defaultValue;
+        }
+
+        public static int GetInt(string configKey, int defaultValue = 0)
+        {
+            var cfgKey = ConfigurationManager.AppSettings[configKey];
+            var success = int.TryParse(cfgKey, out int retValue);
+            return success ? retValue : defaultValue;
+        }
+
+        public static long GetLong(string configKey, long defaultValue = 0)
+        {
+            var cfgKey = ConfigurationManager.AppSettings[configKey];
+            var success = long.TryParse(cfgKey, out long retValue);
+            return success ? retValue : defaultValue;
+        }
+    }
+
+    #endregion Configuration Helpers
 
     #region JobIndexer
     public class JobIndexer
     {
+        static readonly ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
         private readonly int _jobId;
         private readonly List<long> _oids;
         private readonly string _jobDir;
         private readonly string _fullIndexFile;
         private readonly string _statusFile;
         private readonly string _backupStatusFile;
+        public List<long> FailedOids { get; private set; } = new();
 
         public JobIndexer(int jobId, List<long> oids)
         {
@@ -273,43 +306,38 @@ namespace ProgressiveIndexerService
             var status = JsonSerializer.Deserialize<IndexingStatus>(File.ReadAllText(_statusFile))!;
             byte[] bitArray = Convert.FromBase64String(fullIndex._bitArray);
 
-            bool hasError = false;
-
             foreach (var oid in _oids)
             {
+                log.Info($"Bắt đầu xử lý record id = {oid}.");
                 int index = _oids.IndexOf(oid);
                 try
                 {
                     if (!RecordIndexer.IsBitSet(ref bitArray, index))
                     {
                         var recordIndexer = new RecordIndexer(_jobId, oid);
-                        bool success = await recordIndexer.RunAsync();
-                        if (!success) hasError = true;
+                        await recordIndexer.RunAsync(); // nếu lỗi critical, ném ra -> dừng
 
                         RecordIndexer.SetBit(ref bitArray, index, true);
                         status.LastOffset = index;
                         status.LastIndexed = DateTime.UtcNow;
-
                         SaveCheckpoint(fullIndex, status, bitArray);
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"❌ Lỗi khi xử lý OID={oid}: {ex.Message}");
-                    hasError = true;
-                    continue;
+                    FailedOids.Add(oid);
+                    Console.WriteLine($"❌ Critical error OID={oid}: {ex.Message}");
+                    SaveCheckpoint(fullIndex, status, bitArray);
+                    ExportCsvFromDb(); // xuất CSV trước khi dừng
+                    Environment.Exit(1); // dừng toàn bộ chương trình
                 }
             }
 
             status.FullIndexingCompleted = true;
             SaveCheckpoint(fullIndex, status, bitArray);
 
-            if (hasError)
-                Console.WriteLine("⚠️ Một số OID gặp lỗi trong quá trình xử lý!");
-            else
-                Console.WriteLine("✅ Tất cả OID đã xử lý xong!");
-
             ExportCsvFromDb();
+            Console.WriteLine("✅ Job hoàn tất!");
         }
 
         private void SaveCheckpoint(FullIndex fullIndex, IndexingStatus status, byte[] bitArray)
@@ -344,7 +372,7 @@ namespace ProgressiveIndexerService
                 writer.WriteLine($"{reader.GetInt64(0)},{reader.GetString(1)},{reader.GetString(2)}");
             }
 
-            Console.WriteLine($"✅ Job {_jobId} hoàn tất, CSV: {csvFile}");
+            Console.WriteLine($"✅ CSV xuất ra: {csvFile}");
         }
     }
     #endregion
@@ -353,6 +381,7 @@ namespace ProgressiveIndexerService
     class Program
     {
         static readonly ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+
         static async Task Main(string[] args)
         {
             AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
@@ -366,7 +395,7 @@ namespace ProgressiveIndexerService
 
                 if (args.Length < 2)
                 {
-                    Console.WriteLine("Bạn dùng sai cú pháp. Cú pháp đúng là: ProgressiveIndexerService <JobID> <OID1,OID2,...>");
+                    Console.WriteLine("Cú pháp: ProgressiveIndexerService <JobID> <OID1,OID2,...>");
                     return;
                 }
 
